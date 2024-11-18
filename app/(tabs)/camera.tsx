@@ -79,7 +79,7 @@ export default function Camera() {
     formData.append("file", imageBlob, 'image.jpg');
 
     try {
-      const res = await fetch('https://cfapi.share.zrok.io/predictor/predict', {
+      const res = await fetch('http://localhost:8000/predictor/predict', {
         method: 'POST',
         headers: {
           'Content-Type': 'multipart/form-data',
