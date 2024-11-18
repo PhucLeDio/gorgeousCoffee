@@ -1,6 +1,6 @@
 import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
 import { useRef, useState } from 'react';
-import { Button, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Button, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import AntDesign from '@expo/vector-icons/AntDesign';
 import Entypo from '@expo/vector-icons/Entypo';
 import PhotoPreviewSection from '../../components/camera/PhotoPreviewSection';
@@ -8,13 +8,14 @@ import * as ImagePicker from 'expo-image-picker';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Image } from 'tamagui';
 import PhotoPickerSection from 'components/camera/PhotoPickerSection';
+import axios from "axios";
 
 export default function Camera() {
   const [facing, setFacing] = useState<CameraType>('back');
   const [permission, requestPermission] = useCameraPermissions();
   const [photo, setPhoto] = useState<any>(null);
   const cameraRef = useRef<CameraView | null>(null);
-  const [image, setImage] = useState<string | null>(null);
+  const [image, setImage] = useState<ImagePicker.ImagePickerAsset | null>(null);
 
   if (!permission) {
     // Camera permissions are still loading.
@@ -51,19 +52,48 @@ export default function Camera() {
     // No permissions request is necessary for launching the image library
     let result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.All,
-      // allowsEditing: true,
-      aspect: [2, 4],
+      allowsEditing: true,
+      // aspect: [2, 4],
       quality: 1,
-      // base64: true
+      base64: true
       // allowsMultipleSelection: true,
     });
 
-    console.log(result);
-
-    if (!result.canceled) {
-      setImage(result.assets[0].uri);
+    if (result.assets && result.assets.length > 0) {
+      // console.log(result.assets[0].uri);
+      if (!result.canceled) {
+        setImage(result.assets[0]);
+      }
     }
   }
+
+  const handleUpload = async (data) => {
+    if (!data) {
+      Alert.alert('No photo to upload');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("user_id", "672e3f347e1a5495453f36f8"); // Thêm user_id vào FormData
+    const imageBlob = await (await fetch(data.uri)).blob();
+    formData.append("file", imageBlob, 'image.jpg');
+
+    try {
+      const res = await fetch('https://cfapi.share.zrok.io/predictor/predict', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        body: formData,
+      });
+      const json = await res.json();
+      console.log(json);
+    } catch (error) {
+      // console.log("Error:", JSON.stringify(error.toJSON(), null, 2));
+      console.error(error);
+    }
+  }
+
 
   const handleRetakePhoto = () => setPhoto(null);
 
@@ -71,7 +101,7 @@ export default function Camera() {
 
   if (photo) return <PhotoPreviewSection photo={photo} handleRetakePhoto={handleRetakePhoto} />;
 
-  if (image) return <PhotoPickerSection photo={image} handleRetakePhoto={handleRepickPhoto} />;
+  if (image) return <PhotoPickerSection photo={image} handleRetakePhoto={handleRepickPhoto} handleUpload={handleUpload}/>;
 
   return (
     <View style={styles.container}>

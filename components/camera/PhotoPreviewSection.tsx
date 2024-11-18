@@ -12,6 +12,7 @@ const PhotoPreviewSection = ({
     photo: CameraCapturedPicture,
     handleRetakePhoto: () => void,
 }) => {
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.box}>
