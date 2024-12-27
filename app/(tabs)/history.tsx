@@ -30,6 +30,8 @@ export default function History() {
           `https://cfapi.share.zrok.io/histories/${user_id}`
         );
         if (response.ok) {
+          setLoading(false);
+
           const data = await response.json();
           setItems(data);
         } else {
@@ -44,7 +46,7 @@ export default function History() {
     fetchData();
 
     // Định kỳ gọi fetch mỗi 30 giây
-    const interval = setInterval(fetchData, 30000); // 30 giây
+    const interval = setInterval(fetchData, 30000); 
 
     return () => clearInterval(interval); // Dọn dẹp interval khi component unmount
   }, [router]);
