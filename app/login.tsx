@@ -20,7 +20,9 @@ export default function AuthScreen() {
   const [username, setUsername] = useState<string>("");
   const [confirmPassword, setConfirmPassword] = useState<string>("");
 
-  const url = "https://cfapi.share.zrok.io";
+  const url = "http://localhost:8285";
+
+  // const url = "https://cfapi.share.zrok.io";
   const url_post_register = url + "/auth/register";
   const url_post_login = url + "/auth/login";
 
