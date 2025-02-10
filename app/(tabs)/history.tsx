@@ -27,7 +27,7 @@ export default function History() {
 
         const user_id = await AsyncStorage.getItem("user_id");
         const response = await fetch(
-          `https://cfapi.share.zrok.io/histories/${user_id}`
+          `http://localhost:8285/histories/${user_id}`
         );
         if (response.ok) {
           setLoading(false);
