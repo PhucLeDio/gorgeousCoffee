@@ -33,7 +33,15 @@ import {
   Label,
 } from "tamagui";
 
-import city from "../../assets/images/city.png";
+import WeatherBg from "../../assets/images/WeatherBg.png";
+import lightningicontravelmug from "../../assets/images/lightning-icon-travel-mug.png";
+
+import img_1041022 from "../../assets/images/1041022.png";
+import img_5846822 from "../../assets/images/5846822.png";
+import img_4088981 from "../../assets/images/4088981.png";
+import img_862819 from "../../assets/images/862819.png";
+import bg1 from "../../assets/images/bg1.png";
+
 import FeatureItem from "components/home/featurebox";
 import GlassmorphismCard from "components/home/GlassContainer";
 import MyPlantCard from "components/home/myplantContainer";
@@ -46,28 +54,22 @@ import * as Location from "expo-location";
 export default function Home() {
   const features = [
     {
-      iconUrl: "https://cdn-icons-png.flaticon.com/512/1041/1041022.png",
+      iconUrl: img_1041022,
       label: "Theo dõi bão",
     },
     {
-      iconUrl: "https://cdn-icons-png.flaticon.com/128/5846/5846822.png",
+      iconUrl: img_5846822,
       label: "Chuyến xe nông dân",
     },
     {
-      iconUrl: "https://cdn-icons-png.flaticon.com/128/4088/4088981.png",
+      iconUrl: img_4088981,
       label: "Bảo hiểm lượng mưa",
     },
     {
-      iconUrl: "https://cdn-icons-png.flaticon.com/128/862/862819.png",
+      iconUrl: img_862819,
       label: "Giá cả thị trường",
     },
   ];
-
-  // login
-  // const router = useRouter();
-  // useEffect(() => {
-  //   router.replace("/login");
-  // }, [router]);
 
   const [loading, setLoading] = useState(false);
   const [location, setLocation] = useState<Location.LocationObject | null>(
@@ -149,7 +151,7 @@ export default function Home() {
             <YStack flex={5.5} paddingLeft={7} alignItems="center">
               <Image
                 source={{
-                  uri: "https://firebasestorage.googleapis.com/v0/b/ecommerceflutter-75a47.appspot.com/o/User%2FImages%2FWeatherBg.png?alt=media&token=3f688e6d-6135-4ba1-afb2-89ed336f19f4",
+                  uri: WeatherBg,
                   width: 180,
                   height: 180,
                 }}
@@ -236,7 +238,7 @@ export default function Home() {
               <Button backgroundColor="#E69227" color="white" width={300}>
                 <Image
                   source={{
-                    uri: "https://image.spreadshirtmedia.net/image-server/v1/compositions/T773A1PA1611PT10X10Y0D153963456W5556H6934Cx000000/views/3,width=550,height=550,appearanceId=1,backgroundColor=FFFFFF,noPt=true/lightning-icon-travel-mug.jpg",
+                    uri: lightningicontravelmug,
                     width: 40,
                     height: 40,
                   }}

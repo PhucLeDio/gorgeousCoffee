@@ -31,7 +31,7 @@ export default function Result() {
   const scrollViewRef = useRef<ScrollView>(null);
   const chatScrollViewRef = useRef<ScrollView>(null);
 
-  const url_chatbot = "http://192.168.100.109:5000/predict"; // Thay bằng địa chỉ IP của server
+  const url_chatbot = "http://192.168.0.116:5000/predict"; // Thay bằng địa chỉ IP của server
 
   const handleQuestion = async () => {
     if (query.trim() === "") return;
