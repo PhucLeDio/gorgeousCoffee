@@ -30,7 +30,7 @@ export default function Map() {
     const fetchData = async () => {
       setLoading(true);
       try {
-        const response = await fetch('https://cfapi.share.zrok.io/histories/map');
+        const response = await fetch('http://localhost:8285/histories/map');
         const data = await response.json();
         setData(data);
       } catch (error) {

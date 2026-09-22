@@ -67,7 +67,7 @@ const PhotoPickerSection = ({
       );
 
       const response = await fetch(
-        "https://cfapi.share.zrok.io/predictor/predict",
+        "http://localhost:8285/predictor/predict",
         {
           method: "POST",
           body: formData,
