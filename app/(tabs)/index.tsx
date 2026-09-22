@@ -150,11 +150,9 @@ export default function Home() {
           >
             <YStack flex={5.5} paddingLeft={7} alignItems="center">
               <Image
-                source={{
-                  uri: WeatherBg,
-                  width: 180,
-                  height: 180,
-                }}
+                source={WeatherBg}
+                width={180}
+                height={180}
                 borderRadius={100}
               />
               {/* Degrees */}
@@ -237,11 +235,9 @@ export default function Home() {
             >
               <Button backgroundColor="#E69227" color="white" width={300}>
                 <Image
-                  source={{
-                    uri: lightningicontravelmug,
-                    width: 40,
-                    height: 40,
-                  }}
+                  source={lightningicontravelmug}
+                  width={40}
+                  height={40}
                   borderRadius={100}
                 />
                 Khuyến cáo nông vụ

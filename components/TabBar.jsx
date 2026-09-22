@@ -62,7 +62,7 @@ export default function TabBar({ state, descriptors, navigation }) {
                 onLongPress={onLongPress}
             >
                 {
-                    icons[route.name]({
+                    icons[route.name]?.({
                         color: isFocused ? primaryColor : greyColor
                     })
                 }
