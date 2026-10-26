@@ -55,3 +55,5 @@ export function ToastControl() {
     </YStack>
   )
 }
+
+export default CurrentToast
