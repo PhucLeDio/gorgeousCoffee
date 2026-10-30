@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "expo-router-example",
+    "name": "Lá Cà Phê",
     "slug": "expo-router-example",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -16,7 +16,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#2E7D32"
       },
       "permissions": [
         "android.permission.RECORD_AUDIO"
@@ -35,8 +35,9 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/splash.png",
+          "imageWidth": 240,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "backgroundColor": "#2E7D32"
         }
       ],
       [
@@ -51,17 +52,19 @@
         }
       ],
       [
-        "expo-image-picker",
+        "expo-camera",
         {
-          "photosPermission": "The app accesses your photos to let you share them with your friends."
+          "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera to photograph coffee leaves for disease diagnosis."
         }
       ],
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Allow $(PRODUCT_NAME) to use your location."
+          "locationWhenInUsePermission": "Allow $(PRODUCT_NAME) to use your location to check that you are inside your coffee garden when photographing leaves."
         }
-      ]
+      ],
+      "expo-status-bar",
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true

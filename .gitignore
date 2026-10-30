@@ -40,9 +40,11 @@ node_modules
 # local env files
 .env.local
 .env.development.local
-.env.test.localp
+.env.test.local
 .env.production.local
 
 .expo
 ios
 android
+
+docs/

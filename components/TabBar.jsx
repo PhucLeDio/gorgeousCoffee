@@ -1,75 +1,67 @@
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native'
+import { View, Text, Pressable, StyleSheet } from 'react-native'
 import React from 'react'
-import AntDesign from '@expo/vector-icons/AntDesign';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import Feather from '@expo/vector-icons/Feather';
+import { colors, TAB_BAR_HEIGHT } from 'constants/theme';
 
-export default function TabBar({ state, descriptors, navigation }) {
-    const primaryColor = '#0891b2';
-    const greyColor = '#737373';
+// Thanh tab cố định ở đáy: biểu tượng to, chữ tiếng Việt, nút "Chụp lá" nổi bật ở giữa.
+const TABS = {
+    index: { label: 'Trang chủ', icon: 'home', iconOutline: 'home-outline' },
+    map: { label: 'Bản đồ', icon: 'map', iconOutline: 'map-outline' },
+    camera: { label: 'Chụp lá', icon: 'camera', iconOutline: 'camera' },
+    history: { label: 'Lịch sử', icon: 'time', iconOutline: 'time-outline' },
+    profile: { label: 'Tài khoản', icon: 'person', iconOutline: 'person-outline' },
+}
 
-    const icons = {
-        index: (props, index) => <AntDesign name='home' size={26} color={greyColor} {...props} />,
-        map: (props, index) => <Feather name="map" size={24} color="black" {...props} />,
-        camera: (props, index) => <AntDesign name='camerao' size={26} color={greyColor} {...props} />,
-        history: (props, index) => <Feather name='globe' size={26} color={greyColor} {...props} />,
-        profile: (props, index) => <AntDesign name='user' size={26} color={greyColor} {...props} />
-    }
-
+// Expo Router (SDK 58) truyền emitter/navigateToTab cho tabBar thay cho navigation
+export default function TabBar({ state, emitter, navigateToTab, insets }) {
     return (
-        <View style={styles.tabbar}>
+        <View style={[styles.tabbar, { paddingBottom: Math.max(insets?.bottom ?? 0, 8) }]}>
         {state.routes.map((route, index) => {
-            const { options } = descriptors[route.key];
-            const label =
-            options.tabBarLabel !== undefined
-                ? options.tabBarLabel
-                : options.title !== undefined
-                ? options.title
-                : route.name;
-
-            if (['_sitemap', '+not-found'].includes(route.name)) return null;
+            const tab = TABS[route.name];
+            if (!tab) return null;
 
             const isFocused = state.index === index;
+            const isCamera = route.name === 'camera';
 
             const onPress = () => {
-            const event = navigation.emit({
+            const event = emitter.emit({
                 type: 'tabPress',
                 target: route.key,
                 canPreventDefault: true,
             });
 
             if (!isFocused && !event.defaultPrevented) {
-                navigation.navigate(route.name, route.params);
+                navigateToTab(route.key);
             }
             };
 
-            const onLongPress = () => {
-            navigation.emit({
-                type: 'tabLongPress',
-                target: route.key,
-            });
-            };
+            const color = isFocused ? colors.primaryDark : colors.textMuted;
 
             return (
-            <TouchableOpacity
-                key={index}
+            <Pressable
+                key={route.key}
                 style={styles.tabbarItem}
-                accessibilityRole="button"
+                accessibilityRole="tab"
                 accessibilityState={isFocused ? { selected: true } : {}}
-                accessibilityLabel={options.tabBarAccessibilityLabel}
-                testID={options.tabBarTestID}
+                accessibilityLabel={tab.label}
                 onPress={onPress}
-                onLongPress={onLongPress}
             >
-                {
-                    icons[route.name]?.({
-                        color: isFocused ? primaryColor : greyColor
-                    })
-                }
-                <Text style={{ color: isFocused ? primaryColor : greyColor, fontSize: 12 }}>
-                    {label}
+                {isCamera ? (
+                    <View style={styles.cameraButton}>
+                        <Ionicons name="camera" size={32} color="#fff" />
+                    </View>
+                ) : (
+                    <View style={[styles.iconWrap, isFocused && styles.iconWrapActive]}>
+                        <Ionicons name={isFocused ? tab.icon : tab.iconOutline} size={28} color={color} />
+                    </View>
+                )}
+                <Text
+                    numberOfLines={1}
+                    style={[styles.label, { color: isCamera ? colors.primaryDark : color }, (isFocused || isCamera) && styles.labelActive]}
+                >
+                    {tab.label}
                 </Text>
-            </TouchableOpacity>
+            </Pressable>
             );
         })}
         </View>
@@ -78,25 +70,44 @@ export default function TabBar({ state, descriptors, navigation }) {
 
 const styles = StyleSheet.create({
     tabbar: {
-        position: 'absolute', 
-        bottom: 17,
         flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        backgroundColor: 'white',
-        marginHorizontal: 20,
-        paddingVertical: 10,
-        borderRadius: 25,
-        borderCurve: 'continuous',
-        shadowColor: 'black',
-        shadowOffset: {width: 0, height: 10},
-        shadowRadius: 10,
-        shadowOpacity: 0.1
+        alignItems: 'flex-end',
+        backgroundColor: colors.surface,
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
+        minHeight: TAB_BAR_HEIGHT,
+        paddingTop: 6,
     },
     tabbarItem: {
         flex: 1,
-        justifyContent: 'center',
+        justifyContent: 'flex-end',
         alignItems: 'center',
-        gap: 4
-    }
+        gap: 2,
+        minHeight: 64,
+    },
+    iconWrap: {
+        paddingHorizontal: 14,
+        paddingVertical: 4,
+        borderRadius: 16,
+    },
+    iconWrapActive: {
+        backgroundColor: colors.primarySoft,
+    },
+    cameraButton: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        backgroundColor: colors.primary,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: -22,
+        borderWidth: 4,
+        borderColor: colors.surface,
+    },
+    label: {
+        fontSize: 14,
+    },
+    labelActive: {
+        fontWeight: 'bold',
+    },
 })

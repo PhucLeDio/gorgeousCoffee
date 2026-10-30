@@ -1,192 +1,107 @@
 import React, { useEffect, useState } from "react";
-import { Image, StyleSheet, TouchableOpacity, View, Text } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import EvilIcons from "@expo/vector-icons/EvilIcons";
-import AntDesign from "@expo/vector-icons/AntDesign";
-import { CameraCapturedPicture } from "expo-camera";
-import { router } from "expo-router";
-import * as Location from "expo-location";
-import Result from "app/result";
-import { useRouter } from "expo-router";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Image, ScrollView, StyleSheet, Text, View } from "react-native";
+import { CapturedLeaf, useScanUpload } from "utils/useScanUpload";
+import { BigButton, Notice } from "components/ui";
+import { colors, font, radius, space } from "constants/theme";
 
 const PhotoPreviewSection = ({
   photo,
   handleRetakePhoto,
 }: {
-  photo: CameraCapturedPicture;
+  photo: CapturedLeaf;
   handleRetakePhoto: () => void;
 }) => {
-  const router = useRouter();
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
-  const [name, setName] = useState<string | null>(null);
-  const [cause, setCause] = useState<string | null>(null);
-  const [solution, setSolution] = useState<string | null>(null);
-  const [prePhoto, setPrephoto] = useState<string | null>(null);
-  const [location, setLocation] = useState<Location.LocationObject | null>(
-    null
-  );
+  const { sending, error, retryAt, canResend, send } = useScanUpload(photo);
+  const [now, setNow] = useState(Date.now());
 
+  // Đếm ngược tới lần tự gửi lại
   useEffect(() => {
-    const getLocation = async () => {
-      try {
-        // const { status } = await Location.requestForegroundPermissionsAsync();
-        // if (status !== 'granted') {
-        //   console.error('Permission to access location was denied');
-        //   return;
-        // }
+    if (!retryAt) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [retryAt]);
 
-        const location = await Location.getCurrentPositionAsync({});
-        setLocation(location);
-      } catch (error) {
-        console.error("Error getting location:", error);
-      }
-    };
-
-    getLocation();
-  }, []);
-
-  const handleCheckPhoto = async () => {
-    if (loading) return;
-    setLoading(true);
-    try {
-      const user_id = await AsyncStorage.getItem("user_id");
-      if (!user_id) {
-        throw new Error("Không tìm thấy user_id trong AsyncStorage.");
-      }
-      const formData = new FormData();
-      formData.append("file", {
-        uri: photo.uri,
-        type: "image/jpeg",
-        name: "photo.jpg",
-      } as any); // Bypass TypeScript type check
-      formData.append("user_id", user_id);
-      formData.append(
-        "croods",
-        `${location?.coords.latitude},${location?.coords.longitude}`
-      );
-
-      const response = await fetch(
-        "http://localhost:8285/predictor/predict",
-        {
-          method: "POST",
-          body: formData,
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
-        }
-      );
-
-      const data = await response.json();
-
-      if (response.ok) {
-        setResult(
-          `Tên bệnh: ${data.result.name}\nNguyên nhân: ${data.result.cause}\nGiải pháp: ${data.result.solution}`
-        );
-        setName(data.result.name);
-        setCause(data.result.cause);
-        setSolution(data.result.solution);
-        setPrephoto(data.image_url);
-
-        // router.replace('/result');
-      } else {
-        setResult(`Lỗi: ${data.message || "Không thể dự đoán"}`);
-      }
-    } catch (error) {
-      console.error("Error:", error);
-      setResult("Đã xảy ra lỗi khi gửi API.");
-    } finally {
-      setLoading(false);
-      if (name && cause && solution && prePhoto) {
-        router.push({
-          pathname: "/result",
-          params: { uri: prePhoto, name, cause, solution },
-        });
-      }
-    }
-  };
-
-  // console.log(result)
-
-  // if (result) return <Result name={name} cause={cause} solution={solution} uri={prePhoto} />
+  const secondsLeft = retryAt ? Math.max(0, Math.ceil((retryAt - now) / 1000)) : 0;
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.box}>
-        <Image
-          style={styles.previewContainer}
-          source={{ uri: "data:image/jpg;base64," + photo.base64 }}
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <Text style={styles.title}>Ảnh đã rõ lá chưa?</Text>
+      <Image style={styles.preview} source={{ uri: photo.uri }} resizeMode="contain" />
+      <Text style={styles.metaText}>
+        Vị trí chụp: sai số ±{Math.round(photo.accuracyM)} m
+      </Text>
+
+      {error && (
+        <Notice tone={retryAt ? "warning" : "danger"} title="Chưa gửi được ảnh">
+          <Text style={styles.noticeText}>{error}</Text>
+          {retryAt && (
+            <Text style={styles.noticeText}>
+              Ảnh vẫn được giữ trên máy. Tự gửi lại sau {secondsLeft} giây.
+            </Text>
+          )}
+        </Notice>
+      )}
+
+      {sending && (
+        <Notice tone="info" title="Đang kiểm tra ảnh...">
+          <Text style={styles.noticeText}>Vui lòng chờ trong giây lát.</Text>
+        </Notice>
+      )}
+
+      <View style={styles.buttons}>
+        {canResend && (
+          <BigButton
+            label={error ? "Gửi lại" : "Gửi kiểm tra"}
+            icon={error ? "refresh" : "checkmark-circle"}
+            onPress={send}
+            loading={sending}
+          />
+        )}
+        {/* Khi không gửi lại được, "Chụp lại" thành nút chính */}
+        <BigButton
+          label="Chụp lại"
+          icon="camera"
+          variant={canResend ? "secondary" : "primary"}
+          onPress={handleRetakePhoto}
+          disabled={sending}
         />
       </View>
-
-      <View style={styles.buttonContainer}>
-        <TouchableOpacity style={styles.button} onPress={handleRetakePhoto}>
-          <EvilIcons name="trash" size={44} color="black" />
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.button} onPress={handleCheckPhoto}>
-          {loading ? (
-            <Text style={styles.loadingText}>Đang kiểm tra...</Text>
-          ) : (
-            <AntDesign name="check" size={44} color="black" />
-          )}
-        </TouchableOpacity>
-      </View>
-    </SafeAreaView>
+    </ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "black",
-    alignItems: "center",
-    justifyContent: "center",
+    backgroundColor: colors.background,
   },
-  box: {
-    borderRadius: 15,
-    padding: 1,
-    width: "95%",
-    backgroundColor: "darkgray",
-    justifyContent: "center",
-    alignItems: "center",
+  content: {
+    padding: space.md,
+    gap: space.md,
   },
-  previewContainer: {
-    width: "75%",
-    height: "75%",
-    borderRadius: 15,
+  title: {
+    fontSize: font.title,
+    fontWeight: "bold",
+    color: colors.text,
   },
-  buttonContainer: {
-    gap: 20,
-    marginTop: "4%",
-    flexDirection: "row",
-    justifyContent: "center",
+  preview: {
     width: "100%",
+    aspectRatio: 3 / 4,
+    maxHeight: 460,
+    borderRadius: radius.lg,
+    backgroundColor: "#222",
   },
-  button: {
-    backgroundColor: "gray",
-    borderRadius: 25,
-    padding: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: "15%",
+  metaText: {
+    fontSize: font.small,
+    color: colors.textMuted,
   },
-  loadingText: {
-    color: "white",
-    fontSize: 16,
+  noticeText: {
+    fontSize: font.body,
+    lineHeight: 27,
+    color: colors.text,
   },
-  resultContainer: {
-    marginTop: 20,
-    padding: 15,
-    backgroundColor: "white",
-    borderRadius: 10,
-    alignItems: "center",
-  },
-  resultText: {
-    color: "black",
-    fontSize: 16,
-    textAlign: "center",
+  buttons: {
+    gap: space.sm,
   },
 });
 

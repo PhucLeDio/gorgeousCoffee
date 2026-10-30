@@ -1,351 +1,313 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
-  Image,
   StyleSheet,
   ScrollView,
-  TextInput,
-  TouchableOpacity,
+  Pressable,
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import Icon from "react-native-vector-icons/Ionicons";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import ScanImage from "components/scan/ScanImage";
+import { BigButton, Card, Notice, SectionTitle, ui } from "components/ui";
+import { colors, font, radius, space } from "constants/theme";
+import { getScan } from "utils/ktcfs/api";
+import {
+  LABEL_COLORS,
+  displayName,
+  formatDateTime,
+  formatPercent,
+  statusOf,
+} from "utils/ktcfs/display";
+import type { Scan } from "utils/ktcfs/types";
+
+// Kết quả một lần chụp. Kết luận đặt lên đầu bằng chữ to và màu theo tình trạng;
+// ca chưa chắc chắn (top2 khác null) phải nêu cả hai khả năng, không kết luận một bệnh.
 export default function Result() {
-  const searchParams = useLocalSearchParams() as {
-    uri: string;
-    name: string;
-    cause: string;
-    solution: string;
-  };
-  const { uri, name, cause, solution } = searchParams;
-
-  const [query, setQuestion] = useState("");
-  const [chatHistory, setChatHistory] = useState<
-    { type: "query" | "results"; text: string }[]
-  >([]);
-  const [isLoading, setIsLoading] = useState(false);
-
-  const scrollViewRef = useRef<ScrollView>(null);
-  const chatScrollViewRef = useRef<ScrollView>(null);
-
-  const url_chatbot = "http://192.168.0.116:5000/predict"; // Thay bằng địa chỉ IP của server
-
-  const handleQuestion = async () => {
-    if (query.trim() === "") return;
-
-    setIsLoading(true);
-
-    const newChat = [...chatHistory, { type: "query", text: query }];
-    setChatHistory(newChat); // Cập nhật lịch sử chat với câu hỏi ngay lập tức
-    setQuestion("");
-
-    try {
-      const response = await fetch(url_chatbot, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          // Thêm các header khác nếu cần, ví dụ: Authorization
-        },
-        body: JSON.stringify({
-          query: query,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json(); // Giả sử server trả về JSON
-
-      // Xử lý dữ liệu trả về từ server
-      let results =
-        data.results || "Hiện tại tôi chưa thể trả lời câu hỏi này.";
-
-      console.log(results);
-
-      setChatHistory((prevChatHistory) => [
-        ...prevChatHistory,
-        { type: "results", text: results },
-      ]);
-    } catch (error) {
-      console.error("Error sending question:", error);
-      setChatHistory((prevChatHistory) => [
-        ...prevChatHistory,
-        { type: "results", text: "Lỗi khi gửi câu hỏi." },
-      ]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    // Khi có tin nhắn mới, scroll đến cuối tin nhắn
-    if (chatHistory.length > 0) {
-      chatScrollViewRef.current?.scrollToEnd({ animated: true });
-    }
-  }, [chatHistory]);
-
-  useEffect(() => {
-    // Scroll đến phần Q&A khi component mount
-    const timeout = setTimeout(() => {
-      scrollViewRef.current?.scrollTo({ y: 550, animated: true }); // Điều chỉnh giá trị y
-    }, 300);
-    return () => clearTimeout(timeout);
-  }, []);
-
-  const MAX_HEIGHT = 100;
+  const { scan_id } = useLocalSearchParams<{ scan_id: string }>();
   const router = useRouter();
+  const [scan, setScan] = useState<Scan | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [showDetails, setShowDetails] = useState(false);
 
-  const goToFullText = (title, content) => {
-    router.push({
-      pathname: "/fullText",
-      params: { title, content },
-    });
-  };
+  useEffect(() => {
+    if (!scan_id) return;
+    getScan(scan_id)
+      .then(setScan)
+      .catch((error) => setLoadError(error.message));
+  }, [scan_id]);
+
+  if (!scan) {
+    return (
+      <View style={styles.centered}>
+        {loadError ? (
+          <Notice tone="danger" title="Không mở được kết quả">
+            {loadError}
+          </Notice>
+        ) : (
+          <ActivityIndicator size="large" color={colors.primary} />
+        )}
+      </View>
+    );
+  }
+
+  const { result, garden } = scan;
+  const uncertain = !!result.top2;
+  const status = statusOf(result);
+  const hasNematode = result.label === "Nematode" || result.top2?.label === "Nematode";
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      style={{ flex: 1 }}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
+    <ScrollView
+      style={ui.screen}
+      contentContainerStyle={styles.content}
     >
-      <ScrollView
-        style={{ flex: 1 }}
-        ref={scrollViewRef}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={styles.container}>
-          {/* Image and Title Section */}
-          <View style={styles.headerContainer}>
-            <Image
-              source={{ uri: uri }}
-              style={styles.image}
-              resizeMode="cover"
-            />
-            <Text style={styles.title}>{name}</Text>
-          </View>
-
-          {/* Disease Information */}
-          <View style={styles.infoContainer}>
-            <TouchableOpacity
-              style={styles.infoSection}
-              onPress={() => goToFullText("Nguyên nhân", cause)}
-            >
-              <Icon
-                name="help-circle-outline"
-                size={20}
-                color="#4CAF50"
-                style={styles.icon}
-              />
-              <View style={styles.infoTextContainer}>
-                <Text style={styles.infoTitle}>Nguyên nhân:</Text>
-                <View style={{ maxHeight: MAX_HEIGHT, overflow: "hidden" }}>
-                  <Text style={styles.infoText}>{cause}</Text>
-                </View>
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.infoSection}
-              onPress={() => goToFullText("Phòng ngừa", solution)}
-            >
-              <Icon
-                name="shield-checkmark-outline"
-                size={20}
-                color="#4CAF50"
-                style={styles.icon}
-              />
-              <View style={styles.infoTextContainer}>
-                <Text style={styles.infoTitle}>Phòng ngừa:</Text>
-                <View style={{ maxHeight: MAX_HEIGHT, overflow: "hidden" }}>
-                  <Text style={styles.infoText}>{solution}</Text>
-                </View>
-              </View>
-            </TouchableOpacity>
-          </View>
-
-          {/* Q&A Section */}
-          <View style={styles.qaContainer}>
-            <Text style={styles.qaTitle}>Hỏi đáp về bệnh</Text>
-
-            {/* Chat History */}
-            <ScrollView
-              style={styles.chatBox}
-              ref={chatScrollViewRef}
-              onContentSizeChange={() =>
-                chatScrollViewRef.current?.scrollToEnd({ animated: true })
-              }
-            >
-              {chatHistory.map((chat, index) => (
-                <View
-                  key={index}
-                  style={[
-                    styles.chatBubble,
-                    chat.type === "query"
-                      ? styles.questionBubble
-                      : styles.answerBubble,
-                  ]}
-                >
-                  <Text style={styles.chatText}>{chat.text}</Text>
-                </View>
-              ))}
-              {isLoading && (
-                <ActivityIndicator
-                  size="small"
-                  color="#4CAF50"
-                  style={{ marginTop: 10 }}
-                />
-              )}
-            </ScrollView>
-
-            {/* Input Section */}
-            <View style={styles.inputContainer}>
-              <TextInput
-                style={styles.input}
-                placeholder="Nhập câu hỏi của bạn..."
-                value={query}
-                onChangeText={setQuestion}
-                placeholderTextColor="#aaa"
-              />
-              <TouchableOpacity
-                style={styles.sendButton}
-                onPress={handleQuestion}
-              >
-                <Icon name="send" size={20} color="#fff" />
-              </TouchableOpacity>
-            </View>
-          </View>
+      {/* Kết luận */}
+      <View style={[styles.verdict, { backgroundColor: status.soft, borderColor: status.color }]}>
+        <View style={styles.verdictHeader}>
+          <Ionicons name={status.icon} size={44} color={status.color} />
+          <Text style={[styles.verdictTitle, { color: status.color }]}>
+            {uncertain ? "Chưa chắc chắn" : displayName(result)}
+          </Text>
         </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        {uncertain ? (
+          <>
+            <Text style={ui.body}>Có thể là một trong hai bệnh:</Text>
+            {[result, result.top2!].map((item, index) => (
+              <View key={item.label} style={styles.candidate}>
+                <Text style={styles.candidateNumber}>{index + 1}</Text>
+                <Text style={styles.candidateText}>{displayName(item)}</Text>
+                <Text style={styles.candidatePercent}>{formatPercent(item.confidence)}</Text>
+              </View>
+            ))}
+            <Text style={[ui.body, { fontWeight: "bold" }]}>
+              {result.note ||
+                "Hãy kiểm tra lại trên cây theo hướng dẫn bên dưới trước khi xử lý."}
+            </Text>
+          </>
+        ) : (
+          <>
+            <Text style={ui.body}>
+              Độ tin cậy:{" "}
+              <Text style={{ fontWeight: "bold" }}>{formatPercent(result.confidence)}</Text>
+            </Text>
+            {!!result.note && <Text style={ui.body}>{result.note}</Text>}
+          </>
+        )}
+      </View>
+
+      <ScanImage scanId={scan.scan_id} result={result} maxHeight={360} />
+      {result.boxes.length > 0 && (
+        <Text style={[ui.muted, { textAlign: "center" }]}>
+          Khung đỏ là chỗ nghi bị bệnh trên lá
+        </Text>
+      )}
+
+      {/* Việc cần làm */}
+      {!!result.check && (
+        <Card style={uncertain && { borderColor: colors.warning, borderWidth: 2 }}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="search" size={28} color={colors.primary} />
+            <SectionTitle style={styles.sectionTitle}>Kiểm tra lại trên cây</SectionTitle>
+          </View>
+          <Text style={ui.body}>{result.check}</Text>
+        </Card>
+      )}
+
+      {hasNematode && (
+        <Notice tone="warning" title="Tuyến trùng: chỉ là nghi ngờ">
+          Tuyến trùng gây bệnh ở rễ, ảnh lá chỉ cho phép nghi ngờ. Cần đào kiểm tra rễ để
+          xác nhận.
+        </Notice>
+      )}
+
+      {!!result.advice && (
+        <Card>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="shield-checkmark" size={28} color={colors.primary} />
+            <SectionTitle style={styles.sectionTitle}>Lời khuyên</SectionTitle>
+          </View>
+          <Text style={ui.body}>{result.advice}</Text>
+        </Card>
+      )}
+
+      {/* Thông tin lần chụp */}
+      <Card style={{ gap: space.sm }}>
+        <View style={styles.infoRow}>
+          <Ionicons name="location" size={26} color={colors.textMuted} />
+          <Text style={[ui.body, { flex: 1 }]}>
+            {garden
+              ? `Vườn ${garden.polygon_id} · xã ${garden.commune_name} · ${garden.area_ha} ha`
+              : "Không xác định được vườn"}
+          </Text>
+        </View>
+        <View style={styles.infoRow}>
+          <Ionicons name="time" size={26} color={colors.textMuted} />
+          <Text style={[ui.body, { flex: 1 }]}>Chụp lúc {formatDateTime(scan.captured_at)}</Text>
+        </View>
+        {(result.is_disease || uncertain) && (
+          <View style={styles.infoRow}>
+            <Ionicons name="map" size={26} color={colors.textMuted} />
+            <Text style={[ui.body, { flex: 1 }]}>
+              {scan.recorded_on_map
+                ? "Đã báo lên bản đồ dịch bệnh của xã"
+                : "Chưa ghi lên bản đồ của xã"}
+            </Text>
+          </View>
+        )}
+      </Card>
+
+      {/* Xác suất 8 loại: ẩn mặc định cho đỡ rối */}
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => setShowDetails((value) => !value)}
+        style={styles.detailsToggle}
+      >
+        <Text style={styles.detailsToggleText}>
+          {showDetails ? "Ẩn chi tiết" : "Xem chi tiết các khả năng"}
+        </Text>
+        <Ionicons
+          name={showDetails ? "chevron-up" : "chevron-down"}
+          size={24}
+          color={colors.primaryDark}
+        />
+      </Pressable>
+      {showDetails && (
+        <Card style={{ gap: space.sm }}>
+          {result.probabilities.map((item) => (
+            <View key={item.label}>
+              <View style={styles.probHeader}>
+                <Text style={ui.body}>{displayName(item)}</Text>
+                <Text style={[ui.body, { fontWeight: "bold" }]}>
+                  {formatPercent(item.confidence)}
+                </Text>
+              </View>
+              <View style={styles.probTrack}>
+                <View
+                  style={[
+                    styles.probBar,
+                    {
+                      width: `${Math.max(1, item.confidence * 100)}%`,
+                      backgroundColor: LABEL_COLORS[item.label],
+                    },
+                  ]}
+                />
+              </View>
+            </View>
+          ))}
+        </Card>
+      )}
+
+      <BigButton
+        label="Chụp lá khác"
+        icon="camera"
+        variant="secondary"
+        onPress={() => router.navigate("/camera")}
+      />
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    // flex: 1, // Bỏ dòng này
-    backgroundColor: "#f5f5f5",
-    padding: 20,
-  },
-  headerContainer: {
-    alignItems: "center",
-    marginBottom: 50,
-  },
-  image: {
-    width: "100%",
-    height: 250,
-    borderRadius: 15,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "bold",
-    textAlign: "center",
-    marginTop: 15,
-    color: "#333",
-  },
-  infoContainer: {
-    padding: 15,
-    backgroundColor: "#fff",
-    borderRadius: 15,
-    marginBottom: 20,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 3.84,
-    elevation: 5,
-  },
-  infoSection: {
-    marginBottom: 15,
-    flexDirection: "row",
-    alignItems: "flex-start",
-  },
-  icon: {
-    marginRight: 8,
-    marginTop: 5,
-  },
-  infoTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#333",
-  },
-  infoText: {
-    fontSize: 16,
-    color: "#555",
-    lineHeight: 24,
-  },
-  infoTextContainer: {
+  centered: {
     flex: 1,
-  },
-  qaContainer: {
-    padding: 15,
-    backgroundColor: "#fff",
-    borderRadius: 15,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 3.84,
-    elevation: 5,
-  },
-  qaTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    marginBottom: 15,
-    color: "#333",
-  },
-  chatBox: {
-    flex: 1,
-    marginBottom: 15,
-  },
-  chatBubble: {
-    padding: 12,
-    borderRadius: 15,
-    marginBottom: 10,
-    maxWidth: "80%",
-  },
-  questionBubble: {
-    alignSelf: "flex-end",
-    backgroundColor: "#e4f0e4",
-    borderTopRightRadius: 2,
-  },
-  answerBubble: {
-    alignSelf: "flex-start",
-    backgroundColor: "#f0f0f0",
-    borderTopLeftRadius: 2,
-  },
-  chatText: {
-    fontSize: 16,
-    color: "#333",
-  },
-  inputContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 15,
-  },
-  input: {
-    flex: 1,
-    height: 45,
-    borderColor: "#ddd",
-    borderWidth: 1,
-    borderRadius: 15,
-    paddingHorizontal: 15,
-    backgroundColor: "#fff",
-    marginRight: 10,
-    fontSize: 16,
-  },
-  sendButton: {
-    backgroundColor: "#4CAF50",
-    padding: 12,
-    borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
+    padding: space.lg,
+    backgroundColor: colors.background,
+  },
+  content: {
+    padding: space.md,
+    gap: space.md,
+    paddingBottom: space.xl,
+  },
+  verdict: {
+    borderWidth: 2,
+    borderRadius: radius.lg,
+    padding: space.md,
+    gap: space.sm,
+  },
+  verdictHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+  },
+  verdictTitle: {
+    flex: 1,
+    fontSize: font.hero,
+    fontWeight: "bold",
+  },
+  candidate: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: space.sm,
+  },
+  candidateNumber: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    textAlign: "center",
+    lineHeight: 32,
+    fontSize: font.body,
+    fontWeight: "bold",
+    color: "#fff",
+    backgroundColor: colors.warning,
+    overflow: "hidden",
+  },
+  candidateText: {
+    flex: 1,
+    fontSize: font.large,
+    fontWeight: "bold",
+    color: colors.text,
+  },
+  candidatePercent: {
+    fontSize: font.body,
+    color: colors.textMuted,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    marginBottom: space.xs,
+  },
+  sectionTitle: {
+    marginBottom: 0,
+    fontSize: font.large + 2,
+  },
+  infoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+  },
+  detailsToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: space.xs,
+    minHeight: 48,
+  },
+  detailsToggleText: {
+    fontSize: font.body,
+    fontWeight: "bold",
+    color: colors.primaryDark,
+    textDecorationLine: "underline",
+  },
+  probHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  probTrack: {
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: "#EAE8E3",
+    overflow: "hidden",
+    marginTop: 4,
+  },
+  probBar: {
+    height: "100%",
+    borderRadius: 6,
   },
 });

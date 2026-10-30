@@ -1,575 +1,486 @@
-import { Dimensions, ImageBackground, StyleSheet, View } from "react-native";
-import {
-  LoaderCircle,
-  TimerReset,
-  Cloudy,
-  ArrowBigRight,
-  ListPlus,
-  Trees,
-  Calendar,
-  MessageSquare,
-  PhoneCall,
-} from "@tamagui/lucide-icons";
-import {
-  Paragraph,
-  SizableText,
-  Text,
-  XStack,
-  YStack,
-  Button,
-  YGroup,
-  Separator,
-  ListItem,
-  Image,
-  H3,
-  Avatar,
-  ZStack,
-  H4,
-  styled,
-  H1,
-  ScrollView,
-  H2,
-  Switch,
-  Label,
-} from "tamagui";
-
-import WeatherBg from "../../assets/images/WeatherBg.png";
-import lightningicontravelmug from "../../assets/images/lightning-icon-travel-mug.png";
-
-import img_1041022 from "../../assets/images/1041022.png";
-import img_5846822 from "../../assets/images/5846822.png";
-import img_4088981 from "../../assets/images/4088981.png";
-import img_862819 from "../../assets/images/862819.png";
-import bg1 from "../../assets/images/bg1.png";
-
-import FeatureItem from "components/home/featurebox";
-import GlassmorphismCard from "components/home/GlassContainer";
-import MyPlantCard from "components/home/myplantContainer";
-import { useEffect, useState } from "react";
-import { useRouter } from "expo-router";
-
-import Fontisto from "@expo/vector-icons/Fontisto";
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import React, { useCallback, useRef, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Location from "expo-location";
+import { WEATHER_API_KEY } from "constants/api";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { colors, font, radius, shadow, space } from "constants/theme";
+import { BigButton, Card, SectionTitle, ui } from "components/ui";
+import Logo from "components/Logo";
+import { useScanImage } from "components/scan/ScanImage";
+import { listScans } from "utils/ktcfs/api";
+import { getUser } from "utils/ktcfs/session";
+import { formatDateTime, statusOf, statusTitle } from "utils/ktcfs/display";
+import type { KtcfsUser, Scan } from "utils/ktcfs/types";
 
-export default function Home() {
-  const features = [
-    {
-      iconUrl: img_1041022,
-      label: "Theo dõi bão",
-    },
-    {
-      iconUrl: img_5846822,
-      label: "Chuyến xe nông dân",
-    },
-    {
-      iconUrl: img_4088981,
-      label: "Bảo hiểm lượng mưa",
-    },
-    {
-      iconUrl: img_862819,
-      label: "Giá cả thị trường",
-    },
-  ];
+type Weather = {
+  location: string;
+  temp_c: number;
+  wind_kph: number;
+  humidity: number;
+  condition: string;
+  icon: string;
+};
 
-  const [loading, setLoading] = useState(false);
-  const [location, setLocation] = useState<Location.LocationObject | null>(
-    null
+// Các bước chụp, theo quy tắc của KTCFS (đứng trong vườn, GPS tốt, ảnh rõ)
+const CAPTURE_STEPS = [
+  { icon: "location" as const, text: "Đứng trong vườn cà phê của mình" },
+  { icon: "radio" as const, text: "Chờ ô định vị chuyển màu xanh" },
+  { icon: "sunny" as const, text: "Chụp gần, rõ 1–2 lá, đủ sáng, không ngược nắng" },
+];
+
+type IconName = React.ComponentProps<typeof Ionicons>["name"];
+
+// Ô tiện ích to, dạng lưới 2 cột
+function Tile({
+  icon,
+  title,
+  color,
+  onPress,
+}: {
+  icon: IconName;
+  title: string;
+  color: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      onPress={onPress}
+      style={({ pressed }) => [styles.tile, pressed && { opacity: 0.75 }]}
+    >
+      <View style={[styles.tileIcon, { backgroundColor: color }]}>
+        <Ionicons name={icon} size={30} color="#fff" />
+      </View>
+      <Text style={styles.tileTitle}>{title}</Text>
+    </Pressable>
   );
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [weather, setWeather] = useState<any | null>(null);
+}
 
-  useEffect(() => {
-    async function getCurrentLocation() {
-      try {
-        setLoading(true); // Bắt đầu loading
-        let { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== "granted") {
-          setErrorMsg("Permission to access location was denied");
-          setLoading(false);
-          return;
-        }
+function RecentThumb({ scanId }: { scanId: string }) {
+  const { uri } = useScanImage(scanId);
+  return uri ? (
+    <Image source={{ uri }} style={styles.recentThumb} />
+  ) : (
+    <View style={[styles.recentThumb, { backgroundColor: colors.primarySoft }]} />
+  );
+}
 
-        let location = await Location.getCurrentPositionAsync({});
-        setLocation(location);
-      } catch (error) {
-        setErrorMsg("Error getting location");
-        console.error(error);
-      } finally {
-        setLoading(false); // Dừng loading
+const WEATHER_REFRESH_MS = 10 * 60 * 1000;
+const WEATHER_MOVE_KM = 1;
+
+// Khoảng cách gần đúng giữa hai toạ độ (km), đủ dùng cho khoảng cách ngắn
+function distanceKm(a: { lat: number; lon: number }, b: { lat: number; lon: number }) {
+  const rad = Math.PI / 180;
+  const x = (b.lon - a.lon) * rad * Math.cos(((a.lat + b.lat) / 2) * rad);
+  const y = (b.lat - a.lat) * rad;
+  return Math.sqrt(x * x + y * y) * 6371;
+}
+
+// Thời tiết theo vị trí GPS hiện tại. Lấy lại mỗi khi mở Trang chủ (vị trí có thể đã đổi,
+// kể cả khi giả lập GPS), nhưng chỉ gọi WeatherAPI khi đã quá 10 phút hoặc đi xa hơn 1 km.
+function useWeather() {
+  const [weather, setWeather] = useState<Weather | null>(null);
+  const last = useRef<{ lat: number; lon: number; at: number } | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!WEATHER_API_KEY) return;
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") return;
+      // Độ chính xác cao: lấy theo GPS thay vì Wi-Fi/trạm phát sóng
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+      const here = { lat: position.coords.latitude, lon: position.coords.longitude };
+      const prev = last.current;
+      if (
+        prev &&
+        Date.now() - prev.at < WEATHER_REFRESH_MS &&
+        distanceKm(prev, here) < WEATHER_MOVE_KM
+      ) {
+        return;
       }
+      const response = await fetch(
+        `https://api.weatherapi.com/v1/current.json?key=${WEATHER_API_KEY}&q=${here.lat},${here.lon}&lang=vi`
+      );
+      const data = await response.json();
+      if (!response.ok || data.error) {
+        console.error("Weather API error:", data.error?.message ?? response.status);
+        return;
+      }
+      last.current = { ...here, at: Date.now() };
+      setWeather({
+        location: data.location.name,
+        temp_c: data.current.temp_c,
+        wind_kph: data.current.wind_kph,
+        humidity: data.current.humidity,
+        condition: data.current.condition.text,
+        icon: `https:${data.current.condition.icon}`,
+      });
+    } catch (error) {
+      console.error("Error getting weather:", error);
     }
-
-    getCurrentLocation();
   }, []);
 
-  useEffect(() => {
-    async function getWeather() {
-      if (location) {
-        try {
-          setLoading(true); // Bắt đầu loading
-          const response = await fetch(
-            `http://api.weatherapi.com/v1/current.json?key=6cc7f8d8c1e74ddeb87131911242111&q=${location.coords.latitude},${location.coords.longitude}&lang=vi`
-          );
-          const data = await response.json();
-          setWeather({
-            location: data.location.name,
-            temp_c: data.current.temp_c,
-            wind_kph: data.current.wind_kph,
-            humidity: data.current.humidity,
-            condition: data.current.condition.text,
-            icon: data.current.condition.icon.replace(/^\/\//, ""),
-          });
-        } catch (error) {
-          setErrorMsg("Error getting weather");
-          console.error(error);
-        } finally {
-          setLoading(false); // Dừng loading
+  useFocusEffect(
+    useCallback(() => {
+      refresh();
+    }, [refresh])
+  );
+
+  return weather;
+}
+
+export default function Home() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const [user, setUser] = useState<KtcfsUser | null>(null);
+  const [recent, setRecent] = useState<Scan[]>([]);
+  const weather = useWeather();
+
+  useFocusEffect(
+    useCallback(() => {
+      (async () => {
+        const saved = await getUser();
+        if (!saved) {
+          router.replace("/login");
+          return;
         }
-      }
-    }
+        setUser(saved);
+        try {
+          setRecent((await listScans(2)).items);
+        } catch (error) {
+          console.error("Error loading recent scans:", error);
+        }
+      })();
+    }, [router])
+  );
 
-    getWeather();
-  }, [location]); // Chỉ chạy khi `location` đã có giá trị
+  const gardenCount = user?.gardens?.length ?? user?.garden_count ?? 0;
 
-  return loading ? (
-    <View></View>
-  ) : (
-    <ScrollView>
-      <YStack backgroundColor="white">
-        {/* Weather report */}
-        <YStack gap="$5">
-          <XStack
-            gap="$2"
-            paddingTop="$3"
-            backgroundColor="white"
-            borderTopColor="$gray7"
-            borderWidth="$1"
-            borderLeftColor="white"
-            borderRightColor="white"
-            borderBottomColor="white"
+  return (
+    <ScrollView style={ui.screen} contentContainerStyle={{ paddingBottom: space.xl }}>
+      {/* Phần đầu: logo, lời chào */}
+      <View style={[styles.header, { paddingTop: insets.top + space.md }]}>
+        <View style={styles.headerRow}>
+          <Logo size={44} light />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Tài khoản"
+            onPress={() => router.navigate("/profile")}
+            style={styles.avatar}
           >
-            <YStack flex={5.5} paddingLeft={7} alignItems="center">
-              <Image
-                source={WeatherBg}
-                width={180}
-                height={180}
-                borderRadius={100}
-              />
-              {/* Degrees */}
-              <YStack position="absolute" top="50%" left="65%">
-                <Image
-                  source={{
-                    uri: weather
-                      ? `https://${weather?.icon}`
-                      : "https://default-icon-url.png",
-                  }}
-                  width={40}
-                  height={40}
-                  transform={[{ translateX: -43 }, { translateY: -50 }]}
-                />
+            <Ionicons name="person" size={26} color={colors.primary} />
+          </Pressable>
+        </View>
+        <Text style={styles.greeting}>Xin chào{user ? `, ${user.full_name}` : ""}</Text>
+        {user && (
+          <View style={styles.headerChip}>
+            <Ionicons name="location" size={18} color="#fff" />
+            <Text style={styles.headerChipText}>
+              Xã {user.commune_name} · {gardenCount} vườn
+            </Text>
+          </View>
+        )}
+      </View>
 
-                {/* <Cloudy
-                  size={40}
-                  style={{
-                    transform: [{ translateX: -43 }, { translateY: -50 }],
-                  }}
-                /> */}
-                <Text
-                  style={{
-                    transform: [{ translateX: -50 }, { translateY: -50 }],
-                    fontSize: 24,
-                    fontWeight: "bold",
-                    color: "#ffffff",
-                    textAlign: "center",
-                  }}
-                >
-                  {weather ? weather.temp_c : ""}°C
-                </Text>
-              </YStack>
+      <View style={styles.content}>
+        {/* Việc chính: chụp lá */}
+        <View style={styles.hero}>
+          <View style={styles.heroTop}>
+            <View style={styles.heroIcon}>
+              <Ionicons name="scan" size={40} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.heroTitle}>Lá cà phê có bệnh không?</Text>
+              <Text style={ui.muted}>Chụp một tấm, biết ngay kết quả.</Text>
+            </View>
+          </View>
+          <BigButton
+            label="Chụp lá ngay"
+            icon="camera"
+            onPress={() => router.navigate("/camera")}
+          />
+        </View>
 
-              {/* Weather type */}
-              <Text textAlign="center" fontWeight="bold">
-                {weather ? weather.condition : ""}
-              </Text>
-            </YStack>
-
-            <YStack flex={4.5} paddingRight={15} gap="$2">
-              <XStack gap="$3" flexWrap="nowrap" alignItems="center">
-                <Text fontSize={"$7"} flexShrink={0}>
-                  🏠
-                </Text>
-                <Text flexShrink={0}>{weather ? weather.location : ""}</Text>
-                <TimerReset />
-              </XStack>
-              <YGroup gap="$3">
-                <YGroup.Item>
-                  <ListItem
-                    borderColor="$gray4"
-                    borderWidth="$1"
-                    title="Gió"
-                    subTitle={`🌪️   ${weather ? weather.wind_kph : ""} km/h`}
-                    backgroundColor={"white"}
-                    borderRadius={"$10"}
-                  />
-                </YGroup.Item>
-                <YGroup.Item>
-                  <ListItem
-                    borderColor="$gray4"
-                    borderWidth="$1"
-                    title="Độ ẩm"
-                    subTitle={`💧   ${weather ? weather.humidity : ""}`}
-                    backgroundColor={"white"}
-                    borderRadius={"$10"}
-                  />
-                </YGroup.Item>
-              </YGroup>
-            </YStack>
-          </XStack>
-
-          <YStack alignItems="center" paddingBottom="$2">
-            <XStack
-              flexWrap="nowrap"
-              alignItems="center"
-              backgroundColor="#E69227"
-              borderRadius={10}
-            >
-              <Button backgroundColor="#E69227" color="white" width={300}>
-                <Image
-                  source={lightningicontravelmug}
-                  width={40}
-                  height={40}
-                  borderRadius={100}
-                />
-                Khuyến cáo nông vụ
-              </Button>
-              <ArrowBigRight size={30} color="white" />
-            </XStack>
-          </YStack>
-        </YStack>
-
-        {/* Interesting features */}
-        <YStack padding={"$5"}>
-          <H3 color="#294531">Tính năng nổi bật</H3>
-          <XStack gap="$2" justifyContent="space-around" marginTop="$4">
-            {features.map((feature, index) => (
-              <FeatureItem
-                key={index}
-                iconUrl={feature.iconUrl}
-                label={feature.label}
-              />
-            ))}
-          </XStack>
-        </YStack>
-
-        {/* Medicine Finding */}
-        <ImageBackground
-          source={{
-            uri: "https://www.rdworldonline.com/wp-content/uploads/2019/09/pesticides_Shutterstock_featured.jpg",
-          }} // replace with your image URL
-          style={{ width: Dimensions.get("window").width, height: 230 }} // covers entire background
-        >
-          <YStack
-            backgroundColor="rgba(0, 0, 0, 0.4)"
-            width={Dimensions.get("window").width}
-            height={230}
-          >
-            <YStack padding="$2">
-              <XStack
-                justifyContent="space-between"
-                flexWrap="nowrap"
-                alignItems="center"
-                padding="$2"
+        {/* Lần chụp gần đây */}
+        {recent.length > 0 && (
+          <View>
+            <View style={styles.sectionRow}>
+              <SectionTitle style={{ marginBottom: 0 }}>Lần chụp gần đây</SectionTitle>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => router.navigate("/history")}
+                hitSlop={12}
               >
-                <H3 color="white">Tra Cứu Thuốc</H3>
-                <SizableText
-                  size="$5"
-                  color="white"
-                  textDecorationLine="underline"
-                >
-                  Tra cứu ngay
-                </SizableText>
-              </XStack>
+                <Text style={styles.link}>Xem tất cả</Text>
+              </Pressable>
+            </View>
+            <View style={{ gap: space.sm }}>
+              {recent.map((scan) => {
+                const status = statusOf(scan.result);
+                return (
+                  <Pressable
+                    key={scan.scan_id}
+                    accessibilityRole="button"
+                    onPress={() =>
+                      router.push({ pathname: "/result", params: { scan_id: scan.scan_id } })
+                    }
+                    style={({ pressed }) => [styles.recentRow, pressed && { opacity: 0.75 }]}
+                  >
+                    <RecentThumb scanId={scan.scan_id} />
+                    <View style={{ flex: 1, gap: 2 }}>
+                      <View style={[styles.pill, { backgroundColor: status.soft }]}>
+                        <Ionicons name={status.icon} size={18} color={status.color} />
+                        <Text style={[styles.pillText, { color: status.color }]}>
+                          {statusTitle(scan.result)}
+                        </Text>
+                      </View>
+                      <Text style={ui.muted}>{formatDateTime(scan.captured_at)}</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={26} color={colors.textMuted} />
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        )}
 
-              <XStack top="$7" gap="$3">
-                <GlassmorphismCard
-                  text="Thuốc BVTV được phép lưu hành"
-                  uri="https://cdn-icons-png.flaticon.com/512/5671/5671070.png"
-                />
-                <GlassmorphismCard
-                  text="Thuốc BVTV không được lưu hành"
-                  uri="https://cdn3.iconfinder.com/data/icons/weed-vivid-vol-2/256/Pesticide-Free-512.png"
-                />
-              </XStack>
-            </YStack>
-          </YStack>
-        </ImageBackground>
-
-        {/* My plant */}
-        <ZStack height={500}>
-          <YStack height={500}>
-            <YStack height={100} backgroundColor="white" />
-            <YStack
-              height={400}
-              backgroundColor="#F3F8FC"
-              borderTopRightRadius={100}
-              borderTopLeftRadius={100}
+        {/* Tiện ích */}
+        <View>
+          <SectionTitle>Tiện ích</SectionTitle>
+          <View style={styles.grid}>
+            <Tile
+              icon="time"
+              title="Lịch sử chụp"
+              color={colors.primary}
+              onPress={() => router.navigate("/history")}
             />
-          </YStack>
+            <Tile
+              icon="book"
+              title="Tra cứu bệnh"
+              color={colors.accent}
+              onPress={() => router.push("/diseases")}
+            />
+            <Tile
+              icon="map"
+              title="Bản đồ vườn"
+              color={colors.info}
+              onPress={() => router.navigate("/map")}
+            />
+            <Tile
+              icon="person"
+              title="Tài khoản"
+              color="#6A4C93"
+              onPress={() => router.navigate("/profile")}
+            />
+          </View>
+        </View>
 
-          <YStack>
-            <XStack justifyContent="space-between" padding="$4">
-              <H3 color="#294531">Cây trồng của tôi</H3>
-              <ListPlus size={40} color="$green7Light" />
-            </XStack>
-            <YStack top="$-2">
-              <YStack>
-                <XStack justifyContent="center">
-                  <Avatar
-                    circular
-                    size="$6"
-                    borderWidth="$0.25"
-                    borderColor="$gray9"
-                  >
-                    <Avatar.Image
-                      accessibilityLabel="Cam"
-                      src="https://cdn-icons-png.flaticon.com/128/4215/4215095.png"
-                    />
-                    <Avatar.Fallback backgroundColor="$blue10" />
-                  </Avatar>
-                </XStack>
-                <XStack justifyContent="space-around" top="$-7">
-                  <Avatar
-                    circular
-                    size="$6"
-                    borderWidth="$0.25"
-                    borderColor="$gray9"
-                  >
-                    <Avatar.Image
-                      accessibilityLabel="Cam"
-                      src="https://cdn-icons-png.flaticon.com/128/5280/5280911.png"
-                    />
-                    <Avatar.Fallback backgroundColor="$blue10" />
-                  </Avatar>
-                  <Avatar
-                    circular
-                    size="$6"
-                    borderWidth="$0.25"
-                    borderColor="$gray9"
-                  >
-                    <Avatar.Image
-                      accessibilityLabel="Cam"
-                      src="https://cdn-icons-png.flaticon.com/128/1330/1330443.png"
-                    />
-                    <Avatar.Fallback backgroundColor="$blue10" />
-                  </Avatar>
-                </XStack>
-                <XStack justifyContent="space-between" top="$-8">
-                  <Avatar
-                    circular
-                    size="$6"
-                    borderWidth="$0.25"
-                    borderColor="$gray9"
-                  >
-                    <Avatar.Image
-                      accessibilityLabel="Cam"
-                      src="https://cdn-icons-png.flaticon.com/512/8782/8782264.png"
-                    />
-                    <Avatar.Fallback backgroundColor="$blue10" />
-                  </Avatar>
-                  <Avatar
-                    circular
-                    size="$6"
-                    borderWidth="$0.25"
-                    borderColor="$gray9"
-                  >
-                    <Avatar.Image
-                      accessibilityLabel="Cam"
-                      src="https://cdn-icons-png.flaticon.com/128/14034/14034643.png"
-                    />
-                    <Avatar.Fallback backgroundColor="$blue10" />
-                  </Avatar>
-                </XStack>
-              </YStack>
+        {/* Hướng dẫn chụp */}
+        <Card>
+          <SectionTitle>Cách chụp cho đúng</SectionTitle>
+          {CAPTURE_STEPS.map((step, index) => (
+            <View key={step.text} style={styles.step}>
+              <View style={styles.stepIcon}>
+                <Ionicons name={step.icon} size={24} color={colors.primary} />
+              </View>
+              <Text style={[ui.body, { flex: 1 }]}>
+                <Text style={{ fontWeight: "bold" }}>{index + 1}. </Text>
+                {step.text}
+              </Text>
+            </View>
+          ))}
+        </Card>
 
-              <YStack alignItems="center" justifyContent="center" top="$-12">
-                <Image
-                  source={{
-                    uri: "https://cdn-icons-png.flaticon.com/128/4215/4215095.png",
-                    width: 150,
-                    height: 150,
-                  }}
-                />
-                <Text textAlign="center" color="#294531" fontSize="$6">
-                  Cà phê
-                </Text>
-              </YStack>
-
-              <XStack top="$-12" justifyContent="space-between" padding="$3">
-                <MyPlantCard
-                  text="Kĩ thuật canh tác"
-                  uri="https://cdn-icons-png.flaticon.com/128/188/188333.png"
-                />
-                <MyPlantCard
-                  text="Sâu và bệnh hại"
-                  uri="https://cdn-icons-png.flaticon.com/128/11167/11167005.png"
-                />
-                <MyPlantCard
-                  text="Lịch nông vụ"
-                  uri="https://cdn-icons-png.flaticon.com/128/8718/8718037.png"
-                />
-              </XStack>
-            </YStack>
-          </YStack>
-        </ZStack>
-
-        {/* Expert */}
-        <YStack top="$3">
-          <XStack
-            justifyContent="space-between"
-            gap="$3"
-            flexWrap="nowrap"
-            alignItems="center"
-          >
-            <H3 paddingLeft="$3">Chuyên gia tư vấn</H3>
-            <XStack
-              top="$1"
-              right="$3"
-              gap="$3"
-              flexWrap="nowrap"
-              alignItems="center"
-            >
-              <Switch size="$2" theme={"green"}>
-                <Switch.Thumb animation="bouncy" theme={"green"} />
-              </Switch>
-              <Text>Offline</Text>
-            </XStack>
-          </XStack>
-
-          <YStack
-            top="$3"
-            borderWidth="$1"
-            borderBlockColor="$gray3"
-            borderLeftColor="$gray3"
-            borderRightColor="$gray3"
-            margin="$3"
-            shadowColor="$accentColor"
-            borderRadius="$5"
-          >
-            <YStack backgroundColor="#ffffff" borderRadius="$5">
-              <XStack gap="$5" padding="$3">
-                <Avatar
-                  size="$11"
-                  borderWidth="$1"
-                  borderColor="$gray3"
-                  borderRadius="$5"
-                >
-                  <Avatar.Image
-                    accessibilityLabel="Cam"
-                    src="https://hoangkimlong.wordpress.com/wp-content/uploads/2020/03/pham-hong-duc-phuoc-ca-cao.jpg?w=584"
-                  />
-                  <Avatar.Fallback backgroundColor="$blue10" />
-                </Avatar>
-                <YStack gap="$2" top="$1">
-                  <Text>0123456789</Text>
-                  <Text fontSize="$4" fontWeight="bold">
-                    TS. Phạm Hồng Đức Phước
-                  </Text>
-                  <XStack gap="$2" flexWrap="nowrap" alignItems="center">
-                    <Trees size={24} color="#595959" />
-                    <Text fontSize="$4" color="#595959">
-                      Hoa cây cảnh
-                    </Text>
-                  </XStack>
-                  <XStack
-                    gap="$2"
-                    backgroundColor="#E3E3E3"
-                    flexWrap="nowrap"
-                    alignItems="center"
-                    borderRadius="$3"
-                    padding="$2"
-                  >
-                    <Fontisto
-                      name="radio-btn-active"
-                      size={24}
-                      color="#949494"
-                    />
-                    <Text fontSize="$4" color="#949494">
-                      Không trực tuyến
-                    </Text>
-                  </XStack>
-                </YStack>
-              </XStack>
-            </YStack>
-            <YStack
-              backgroundColor="#EAF4FE"
-              borderBottomRightRadius="$4"
-              borderBottomLeftRadius="$4"
-            >
-              <XStack
-                justifyContent="space-between"
-                padding="$2"
-                flexWrap="nowrap"
-                alignItems="center"
-              >
-                <XStack
-                  backgroundColor="#ffffff"
-                  borderRadius={100}
-                  width={48}
-                  height={48}
-                  alignItems="center"
-                  justifyContent="center"
-                >
-                  <Calendar size={24} color="#1F66AE" />
-                </XStack>
-                <XStack
-                  backgroundColor="#ffffff"
-                  borderRadius="$10"
-                  padding="$3"
-                  gap="$2"
-                >
-                  <MessageSquare size={24} color="#1F66AE" />
-                  <Text fontSize="$5" color="#1F66AE">
-                    Đặt câu hỏi
-                  </Text>
-                </XStack>
-                <XStack
-                  backgroundColor="#ffffff"
-                  borderRadius="$10"
-                  padding="$3"
-                  gap="$2"
-                >
-                  <PhoneCall size={24} color="#1F66AE" />
-                  <Text fontSize="$5" color="#1F66AE">
-                    Đặt câu hỏi
-                  </Text>
-                </XStack>
-              </XStack>
-            </YStack>
-          </YStack>
-        </YStack>
-
-        {/* Marketplace */}
-        <XStack alignItems="center" justifyContent="center" height={300}>
-          <H1 textAlign="center">CloseAI</H1>
-        </XStack>
-
-        {/* News */}
-        {/* Logo team */}
-      </YStack>
+        {/* Thời tiết (chỉ hiện khi có khóa WeatherAPI) */}
+        {weather && (
+          <Card style={styles.weather}>
+            <Image source={{ uri: weather.icon }} style={styles.weatherIcon} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.weatherTemp}>{Math.round(weather.temp_c)}°C</Text>
+              <Text style={ui.body}>{weather.condition}</Text>
+              <Text style={ui.muted}>
+                Trạm gần nhất: {weather.location} · Gió {Math.round(weather.wind_kph)} km/h ·
+                Độ ẩm {weather.humidity}%
+              </Text>
+            </View>
+          </Card>
+        )}
+      </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  background: {
-    flex: 1, // Ensures the background covers the whole screen
-    resizeMode: "cover", // Ensures the image scales to cover the entire view
+  header: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: space.md,
+    paddingBottom: 56,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+    gap: space.sm,
   },
-  text: {
-    color: "white",
-    fontSize: 24,
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: space.sm,
+  },
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  greeting: {
+    fontSize: font.title,
     fontWeight: "bold",
-    textAlign: "center",
-    marginTop: 50,
+    color: "#fff",
+  },
+  headerChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 6,
+    paddingHorizontal: space.sm,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
+  headerChipText: {
+    fontSize: font.small,
+    color: "#fff",
+  },
+  content: {
+    paddingHorizontal: space.md,
+    marginTop: -40,
+    gap: space.lg,
+  },
+  hero: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: space.md,
+    gap: space.md,
+    ...shadow,
+    shadowOpacity: 0.14,
+    elevation: 6,
+  },
+  heroTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.md,
+  },
+  heroIcon: {
+    width: 68,
+    height: 68,
+    borderRadius: 20,
+    backgroundColor: colors.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroTitle: {
+    fontSize: font.large + 2,
+    fontWeight: "bold",
+    color: colors.text,
+  },
+  sectionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: space.sm,
+  },
+  link: {
+    fontSize: font.small,
+    fontWeight: "bold",
+    color: colors.primaryDark,
+  },
+  recentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.md,
+    padding: space.sm,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    ...shadow,
+  },
+  recentThumb: {
+    width: 64,
+    height: 64,
+    borderRadius: radius.md,
+  },
+  pill: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 4,
+    paddingHorizontal: space.sm,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  pillText: {
+    fontSize: font.body,
+    fontWeight: "bold",
+  },
+  grid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: space.sm,
+  },
+  tile: {
+    flexBasis: "47%",
+    flexGrow: 1,
+    minHeight: 120,
+    padding: space.md,
+    gap: space.sm,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    justifyContent: "space-between",
+    ...shadow,
+  },
+  tileIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tileTitle: {
+    fontSize: font.large,
+    fontWeight: "bold",
+    color: colors.text,
+  },
+  step: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.md,
+    paddingVertical: space.xs,
+  },
+  stepIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  weather: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.md,
+  },
+  weatherIcon: {
+    width: 64,
+    height: 64,
+  },
+  weatherTemp: {
+    fontSize: font.hero,
+    fontWeight: "bold",
+    color: colors.text,
   },
 });

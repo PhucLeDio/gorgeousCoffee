@@ -1,99 +1,107 @@
-import { Tabs } from 'expo-router'
 import { View, StyleSheet } from 'react-native'
-import { Paragraph, SizableText, Text, XStack, YStack } from 'tamagui'
-import React, {useState, useEffect} from 'react';
-import MapView,{Circle, Marker, Overlay} from 'react-native-maps'
-import { Container } from '@tamagui/lucide-icons';
-// import ColorList from '../../components/ColorList';
+import { Text } from 'tamagui'
+import React, { useCallback, useState } from 'react';
+import MapView, { Marker } from 'react-native-maps'
+import { useFocusEffect, useRouter } from 'expo-router';
+import { listScans } from 'utils/ktcfs/api';
+import { getUser } from 'utils/ktcfs/session';
+import { LABEL_COLORS, displayName } from 'utils/ktcfs/display';
+import type { Garden, Scan } from 'utils/ktcfs/types';
 
+// Xã Đăk Mar, dùng khi tài khoản chưa có vườn
+const DEFAULT_REGION = {
+  latitude: 14.5649,
+  longitude: 107.9234,
+  latitudeDelta: 0.08,
+  longitudeDelta: 0.08,
+};
+
+// Vườn của người dùng và các lần chụp ra bệnh của họ.
 export default function Map() {
-  const [loading, setLoading] = useState<boolean>(false);
-  const [data, setData] = useState<any | null>(null);
+  const router = useRouter();
+  const [gardens, setGardens] = useState<Garden[]>([]);
+  const [scans, setScans] = useState<Scan[]>([]);
 
-  const labelColor = {
-    // 1 = orange, 2 = yellow, 3 = purple, 4 = red
-    // 1 = miner, 2 = rust, 3 = phoma, 4 = cercospora
-    '1': 'rgb(255, 165, 0)',
-    '2': 'rgb(255, 255, 0)',
-    '3': 'rgb(128, 0, 128)',
-    '4': 'rgb(255, 0, 0)',
-  };
+  useFocusEffect(
+    useCallback(() => {
+      (async () => {
+        const user = await getUser();
+        if (!user) {
+          router.replace('/login');
+          return;
+        }
+        setGardens(user.gardens ?? []);
+        try {
+          const page = await listScans(100);
+          setScans(page.items.filter((scan) => scan.result.is_disease || scan.result.top2));
+        } catch (error) {
+          console.error('Error fetching scans: ', error);
+        }
+      })();
+    }, [router])
+  );
 
-  const labels = {
-    '1': 'Miner',
-    '2': 'Rust',
-    '3': 'Phoma',
-    '4': 'Cercospora',
-  };
+  const firstCenter = gardens.find((garden) => garden.center)?.center;
+  const region = firstCenter
+    ? { ...DEFAULT_REGION, latitude: firstCenter.lat, longitude: firstCenter.lon, latitudeDelta: 0.03, longitudeDelta: 0.03 }
+    : DEFAULT_REGION;
+  const shownLabels = [...new Set(scans.map((scan) => scan.result.label))];
 
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        const response = await fetch('http://localhost:8285/histories/map');
-        const data = await response.json();
-        setData(data);
-      } catch (error) {
-        console.error('Error fetching data: ', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchData();
-  }, []);
-
-  return loading ? (
-    <View />
-  ) : (
+  return (
     <View style={styles.container}>
       <MapView
+        key={firstCenter ? 'garden' : 'default'}
         style={styles.map}
-        initialRegion={{
-          latitude: 16.047079,
-          longitude: 108.20623,
-          latitudeDelta: 0.0922,
-          longitudeDelta: 0.0421,
-        }}
-        mapType="terrain"
+        initialRegion={region}
+        mapType="hybrid"
       >
-        {data &&
-          data.map((item: any) => (
+        {gardens.map((garden) =>
+          garden.center ? (
             <Marker
-              key={item.id}
-              coordinate={{
-                latitude: item.croods.lat,
-                longitude: item.croods.long,
-              }}
-            >
-              <View
-                style={{
-                  width: 10,
-                  height: 10,
-                  backgroundColor: labelColor[item.result.toString()],
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: 'blue',
-                }}
-              />
-            </Marker>
-          ))}
-      </MapView>
-      <View style={styles.overlay}>
-        {Object.keys(labelColor).map((key) => (
-          <View style={styles.labelItem} key={key}>
-            <View
-              style={{
-                width: 10,
-                height: 10,
-                backgroundColor: labelColor[key],
-                marginRight: 5,
-              }}
+              key={garden.polygon_id}
+              coordinate={{ latitude: garden.center.lat, longitude: garden.center.lon }}
+              title={`Vườn ${garden.polygon_id}`}
+              description={`${garden.commune_name} · ${garden.area_ha} ha`}
+              pinColor="green"
             />
-            <Text style={styles.labelText}>{labels[key]}</Text>
-          </View>
+          ) : null
+        )}
+        {scans.map((scan) => (
+          <Marker
+            key={scan.scan_id}
+            coordinate={{ latitude: scan.location.lat, longitude: scan.location.lon }}
+            title={scan.result.top2 ? 'Chưa chắc chắn' : displayName(scan.result)}
+            onCalloutPress={() =>
+              router.push({ pathname: '/result', params: { scan_id: scan.scan_id } })
+            }
+          >
+            <View
+              style={[styles.scanDot, { backgroundColor: LABEL_COLORS[scan.result.label] }]}
+            />
+          </Marker>
         ))}
-      </View>
+      </MapView>
+      {shownLabels.length > 0 && (
+        <View style={styles.overlay}>
+          {shownLabels.map((label) => {
+            const sample = scans.find((scan) => scan.result.label === label)!.result;
+            return (
+              <View style={styles.labelItem} key={label}>
+                <View
+                  style={{
+                    width: 16,
+                    height: 16,
+                    borderRadius: 8,
+                    backgroundColor: LABEL_COLORS[label],
+                    marginRight: 5,
+                  }}
+                />
+                <Text style={styles.labelText}>{displayName(sample)}</Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
     </View>
   );
 }
@@ -105,11 +113,18 @@ const styles = StyleSheet.create({
   map: {
     flex: 1,
   },
+  scanDot: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: 'white',
+  },
   overlay: {
     position: 'absolute',
     top: 10,
     right: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    backgroundColor: 'rgba(255, 255, 255, 0.85)',
     borderRadius: 5,
     padding: 10,
   },
@@ -119,7 +134,7 @@ const styles = StyleSheet.create({
     marginBottom: 5,
   },
   labelText: {
-    fontSize: 12,
+    fontSize: 16,
     color: 'black',
   },
 });
