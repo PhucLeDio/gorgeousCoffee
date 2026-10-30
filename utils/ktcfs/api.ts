@@ -163,13 +163,19 @@ async function requestJson<T>(path: string, options?: RequestOptions): Promise<T
   return (await response.json()) as T;
 }
 
+// Bỏ ký tự ẩn (zero-width, BOM) và khoảng trắng/xuống dòng ở hai đầu, hay dính theo khi
+// copy tài khoản từ tin nhắn hoặc ghi chú trên điện thoại.
+function cleanCredential(value: string) {
+  return value.replace(/[\u200B-\u200D\u2060\uFEFF]/g, "").trim();
+}
+
 export async function login(loginId: string, password: string) {
   const data = await requestJson<LoginResponse>("/auth/login", {
     method: "POST",
     auth: false,
     json: {
-      login: loginId.trim(),
-      password,
+      login: cleanCredential(loginId),
+      password: cleanCredential(password),
       device_name: Constants.deviceName ?? `${Platform.OS} ${Platform.Version}`,
     },
     fallback: "Đăng nhập thất bại, hãy thử lại.",

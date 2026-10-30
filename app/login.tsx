@@ -74,6 +74,8 @@ export default function AuthScreen() {
               keyboardType={Platform.OS === "web" ? "default" : "phone-pad"}
               autoCapitalize="none"
               autoCorrect={false}
+              spellCheck={false}
+              textContentType="username"
               value={loginId}
               onChangeText={setLoginId}
               style={styles.input}
@@ -89,6 +91,11 @@ export default function AuthScreen() {
               placeholderTextColor={colors.textMuted}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
+              // Khi bấm hiện mật khẩu, bàn phím không được tự sửa chữ
+              autoCorrect={false}
+              spellCheck={false}
+              autoComplete="password"
+              textContentType="password"
               value={password}
               onChangeText={setPassword}
               onSubmitEditing={handleLogin}
