@@ -1,19 +1,35 @@
-import { CameraView, CameraType, useCameraPermissions } from "expo-camera";
+import { CameraView, useCameraPermissions } from "expo-camera";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  LayoutChangeEvent,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Location from "expo-location";
 import PhotoPreviewSection from "../../components/camera/PhotoPreviewSection";
 import { useFocusEffect, useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { CapturedLeaf } from "utils/useScanUpload";
-import { GOOD_ACCURACY_M, prepareScanImage } from "utils/ktcfs/capture";
+import {
+  GOOD_ACCURACY_M,
+  LEAF_FRAME,
+  PHOTO_ASPECT,
+  prepareScanImage,
+} from "utils/ktcfs/capture";
 import { colors, font, radius, space } from "constants/theme";
 import { BigButton } from "components/ui";
 
 type GpsFix = { lat: number; lon: number; accuracy: number; timestamp: number };
 
 const MAX_FIX_AGE_MS = 60 * 1000;
+// Chờ một nhịp sau khi bấm cho tay hết rung rồi mới chụp
+const STEADY_DELAY_MS = 600;
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Ảnh chỉ được chụp bằng camera trong app (không chọn từ thư viện), khi người dùng
 // đang đứng trong vườn và GPS đủ chính xác (quy tắc chụp của KTCFS).
@@ -21,7 +37,9 @@ export default function Camera() {
   const router = useRouter();
   const cameraRef = useRef<CameraView | null>(null);
 
-  const [facing, setFacing] = useState<CameraType>("back");
+  const [torch, setTorch] = useState(false);
+  const [steadying, setSteadying] = useState(false);
+  const [area, setArea] = useState({ width: 0, height: 0 });
   const [permission, requestPermission] = useCameraPermissions();
   const [locationDenied, setLocationDenied] = useState(false);
   const [fix, setFix] = useState<GpsFix | null>(null);
@@ -68,6 +86,7 @@ export default function Camera() {
       return () => {
         cancelled = true;
         subscription?.remove();
+        setTorch(false);
       };
     }, [])
   );
@@ -88,17 +107,19 @@ export default function Camera() {
   const fixFresh = fix && Date.now() - fix.timestamp < MAX_FIX_AGE_MS;
   const gpsReady = !!fix && fixFresh && fix.accuracy < GOOD_ACCURACY_M;
 
-  // Hàm đổi hướng camera
-  const toggleCameraFacing = () => setFacing((prev) => (prev === "back" ? "front" : "back"));
-
-  // Hàm chụp ảnh: ghi lại vị trí và thời điểm chụp ngay lúc bấm
+  // Hàm chụp ảnh: ghi lại vị trí và thời điểm chụp ngay lúc bấm, nhắc giữ yên máy
+  // một nhịp cho tay hết rung rồi mới chụp
   const handleTakePhoto = async () => {
     if (!cameraRef.current || !fix || !gpsReady || processing) return;
     const capturedAt = new Date();
     const position = fix;
     setProcessing(true);
+    setSteadying(true);
     try {
+      await wait(STEADY_DELAY_MS);
+      if (!cameraRef.current) return;
       const picture = await cameraRef.current.takePictureAsync({ quality: 1 });
+      setSteadying(false);
       const image = await prepareScanImage(picture.uri);
       setPhoto({
         uri: image.uri,
@@ -111,9 +132,18 @@ export default function Camera() {
       console.error("Error taking photo:", error);
       alert("Không chụp được ảnh, hãy thử lại.");
     } finally {
+      setSteadying(false);
       setProcessing(false);
     }
   };
+
+  // Vùng camera đúng tỉ lệ 3:4 như ảnh chụp, lớn nhất vừa chỗ trống
+  const onCameraAreaLayout = (event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    setArea({ width, height });
+  };
+  const cameraWidth = Math.min(area.width, area.height * PHOTO_ASPECT);
+  const cameraHeight = cameraWidth / PHOTO_ASPECT;
 
   // Hàm làm lại hoặc reset ảnh
   const handleRetakePhoto = () => setPhoto(null);
@@ -137,40 +167,64 @@ export default function Camera() {
   }
 
   let shutterLabel = "Bấm để chụp";
-  if (processing) shutterLabel = "Đang xử lý ảnh...";
+  if (steadying) shutterLabel = "Giữ yên máy...";
+  else if (processing) shutterLabel = "Đang xử lý ảnh...";
   else if (!gpsReady) shutterLabel = "Chờ định vị xanh";
 
   // Giao diện camera chính
   return (
     <View style={styles.container}>
-      <CameraView style={styles.camera} facing={facing} ref={cameraRef}>
-        <View style={[styles.gpsBadge, gpsReady ? styles.gpsGood : styles.gpsWaiting]}>
-          <Ionicons
-            name={gpsReady ? "checkmark-circle" : "locate"}
-            size={30}
-            color="white"
-          />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.gpsTitle}>{gpsTitle}</Text>
-            <Text style={styles.gpsHint}>{gpsHint}</Text>
+      <View style={[styles.gpsBadge, gpsReady ? styles.gpsGood : styles.gpsWaiting]}>
+        <Ionicons name={gpsReady ? "checkmark-circle" : "locate"} size={30} color="white" />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.gpsTitle}>{gpsTitle}</Text>
+          <Text style={styles.gpsHint}>{gpsHint}</Text>
+        </View>
+      </View>
+
+      <View style={styles.cameraArea} onLayout={onCameraAreaLayout}>
+        {cameraWidth > 0 && (
+          <View style={{ width: cameraWidth, height: cameraHeight }}>
+            <CameraView
+              style={StyleSheet.absoluteFill}
+              facing="back"
+              ratio="4:3"
+              enableTorch={torch}
+              ref={cameraRef}
+            />
+            {/* Khung đặt lá: ảnh gửi đi được cắt đúng theo khung này */}
+            <View
+              pointerEvents="none"
+              style={[
+                styles.frame,
+                {
+                  left: `${LEAF_FRAME.x * 100}%`,
+                  top: `${LEAF_FRAME.y * 100}%`,
+                  width: `${LEAF_FRAME.width * 100}%`,
+                  height: `${LEAF_FRAME.height * 100}%`,
+                },
+              ]}
+            />
+            {steadying && (
+              <View pointerEvents="none" style={styles.steady}>
+                <Ionicons name="hand-left" size={44} color="white" />
+                <Text style={styles.steadyText}>Giữ yên máy...</Text>
+              </View>
+            )}
           </View>
-        </View>
-        {/* Khung đặt lá */}
-        <View style={styles.frame} pointerEvents="none">
-          <Text style={styles.frameText}>Đặt lá vào giữa khung</Text>
-        </View>
-      </CameraView>
+        )}
+      </View>
 
       <View style={styles.controls}>
-        {/* Nút đổi camera trước/sau */}
+        {/* Nút đèn: chụp dưới tán cây tối */}
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Đổi camera"
-          style={styles.sideButton}
-          onPress={toggleCameraFacing}
+          accessibilityLabel={torch ? "Tắt đèn" : "Bật đèn"}
+          style={[styles.sideButton, torch && styles.sideButtonActive]}
+          onPress={() => setTorch((value) => !value)}
         >
-          <Ionicons name="camera-reverse" size={32} color="white" />
-          <Text style={styles.sideLabel}>Đổi camera</Text>
+          <Ionicons name={torch ? "flashlight" : "flashlight-outline"} size={30} color="white" />
+          <Text style={styles.sideLabel}>{torch ? "Tắt đèn" : "Bật đèn"}</Text>
         </Pressable>
 
         {/* Nút chụp */}
@@ -182,7 +236,7 @@ export default function Camera() {
             disabled={!gpsReady || processing}
             style={[styles.shutter, (!gpsReady || processing) && styles.shutterDisabled]}
           >
-            {processing ? (
+            {processing && !steadying ? (
               <ActivityIndicator size="large" color={colors.primary} />
             ) : (
               <Ionicons name="camera" size={40} color={colors.primary} />
@@ -191,7 +245,7 @@ export default function Camera() {
           <Text style={styles.shutterLabel}>{shutterLabel}</Text>
         </View>
 
-        <View style={styles.sideButton} />
+        <View style={styles.sideButtonSpacer} />
       </View>
     </View>
   );
@@ -221,15 +275,13 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     textAlign: "center",
   },
-  camera: {
+  cameraArea: {
     flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   gpsBadge: {
-    position: "absolute",
-    top: space.md,
-    left: space.md,
-    right: space.md,
-    zIndex: 1,
+    margin: space.sm,
     flexDirection: "row",
     alignItems: "center",
     gap: space.sm,
@@ -254,25 +306,10 @@ const styles = StyleSheet.create({
   },
   frame: {
     position: "absolute",
-    top: "24%",
-    left: "12%",
-    right: "12%",
-    bottom: "8%",
     borderWidth: 3,
     borderColor: "rgba(255, 255, 255, 0.85)",
     borderRadius: radius.lg,
     borderStyle: "dashed",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    paddingBottom: space.sm,
-  },
-  frameText: {
-    color: "white",
-    fontSize: font.small,
-    backgroundColor: "rgba(0, 0, 0, 0.45)",
-    paddingHorizontal: space.sm,
-    paddingVertical: 2,
-    borderRadius: 8,
   },
   controls: {
     flexDirection: "row",
@@ -286,10 +323,36 @@ const styles = StyleSheet.create({
     width: 90,
     alignItems: "center",
     gap: 4,
+    paddingVertical: space.xs,
+    borderRadius: radius.md,
+  },
+  sideButtonActive: {
+    backgroundColor: "rgba(255, 213, 79, 0.35)",
+  },
+  sideButtonSpacer: {
+    width: 90,
+  },
+  steady: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: space.xs,
+    backgroundColor: "rgba(0, 0, 0, 0.25)",
+  },
+  steadyText: {
+    color: "white",
+    fontSize: font.title,
+    fontWeight: "bold",
+    textShadowColor: "rgba(0, 0, 0, 0.6)",
+    textShadowRadius: 6,
   },
   sideLabel: {
     color: "white",
-    fontSize: 14,
+    fontSize: font.small,
   },
   shutterWrap: {
     alignItems: "center",

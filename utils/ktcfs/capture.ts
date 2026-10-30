@@ -7,19 +7,39 @@ export const MAX_CAPTURE_AGE_MS = 30 * 60 * 1000; // phải gửi trong 30 phút
 const LONG_EDGE_PX = 1600;
 const JPEG_QUALITY = 0.8;
 
-// Thu ảnh về JPEG cạnh dài ~1600 px, chất lượng 80 (~150–300 KB).
+// Ảnh chụp dọc tỉ lệ 3:4, khung ngắm trên màn hình cũng 3:4 nên thấy gì chụp nấy.
+export const PHOTO_ASPECT = 3 / 4;
+
+// Khung đặt lá, tính theo tỉ lệ của ảnh. Màn hình vẽ khung này và ảnh gửi lên server
+// được cắt đúng theo nó, để lá chiếm gần hết ảnh (model nhận dạng chính xác hơn).
+export const LEAF_FRAME = { x: 0.1, y: 0.1, width: 0.8, height: 0.8 };
+
+// Cắt theo khung đặt lá rồi thu về JPEG cạnh dài ~1600 px, chất lượng 80 (~150–300 KB).
 // expo-camera đã xoay điểm ảnh đúng chiều, và ảnh lưu lại từ image-manipulator
 // không còn cờ xoay EXIF, nên server nhận ảnh đúng chiều, không bị xoay lần nữa.
 export async function prepareScanImage(uri: string) {
   const original = await ImageManipulator.manipulate(uri).renderAsync();
-  let image = original;
-  if (Math.max(original.width, original.height) > LONG_EDGE_PX) {
-    image = await ImageManipulator.manipulate(original)
-      .resize(
-        original.width >= original.height ? { width: LONG_EDGE_PX } : { height: LONG_EDGE_PX }
-      )
-      .renderAsync();
+  let context = ImageManipulator.manipulate(original);
+  let width = original.width;
+  let height = original.height;
+
+  // Chỉ cắt khi ảnh dọc như khung ngắm; ảnh ngang bất thường thì gửi nguyên ảnh
+  if (height >= width) {
+    const crop = {
+      originX: Math.round(width * LEAF_FRAME.x),
+      originY: Math.round(height * LEAF_FRAME.y),
+      width: Math.round(width * LEAF_FRAME.width),
+      height: Math.round(height * LEAF_FRAME.height),
+    };
+    context = context.crop(crop);
+    width = crop.width;
+    height = crop.height;
   }
+
+  if (Math.max(width, height) > LONG_EDGE_PX) {
+    context = context.resize(width >= height ? { width: LONG_EDGE_PX } : { height: LONG_EDGE_PX });
+  }
+  const image = await context.renderAsync();
   return image.saveAsync({ compress: JPEG_QUALITY, format: SaveFormat.JPEG });
 }
 
